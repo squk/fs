@@ -2826,7 +2826,6 @@ FS_API fs_result fs_mkdir(fs* pFS, const char* pPath, int options)
                 }
 
                 FS_COPY_MEMORY(pRunningPathHeap, pRunningPathStack, runningPathLen);
-                pRunningPath = pRunningPathHeap;
             } else {
                 char* pNewRunningPathHeap;
 
@@ -2837,8 +2836,10 @@ FS_API fs_result fs_mkdir(fs* pFS, const char* pPath, int options)
                     return FS_OUT_OF_MEMORY;
                 }
 
-                pRunningPath = pNewRunningPathHeap;
+                pRunningPathHeap = pNewRunningPathHeap;
             }
+
+            pRunningPath = pRunningPathHeap;
         }
 
         FS_COPY_MEMORY(pRunningPath + runningPathLen, iSegment.pFullPath + iSegment.segmentOffset, iSegment.segmentLength);
