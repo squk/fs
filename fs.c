@@ -3903,7 +3903,13 @@ FS_API fs_result fs_file_duplicate(fs_file* pFile, fs_file** ppDuplicate)
         return result;
     }
 
-    return fs_backend_file_duplicate(fs_get_backend_or_default(fs_file_get_fs(pFile)), pFile, *ppDuplicate);
+    result = fs_backend_file_duplicate(fs_get_backend_or_default(fs_file_get_fs(pFile)), pFile, *ppDuplicate);
+    if (result != FS_SUCCESS) {
+        fs_file_free(ppDuplicate);
+        return result;
+    }
+
+    return result;
 }
 
 FS_API void* fs_file_get_backend_data(fs_file* pFile)
