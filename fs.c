@@ -2729,7 +2729,7 @@ FS_API fs_result fs_rename(fs* pFS, const char* pOldPath, const char* pNewPath, 
 
         pMountPointNew = fs_find_best_write_mount_point(pFS, pNewPath, options, &realNewPath);
         if (pMountPointNew == NULL) {
-            fs_string_free(&realNewPath, fs_get_allocation_callbacks(pFS));
+            fs_string_free(&realOldPath, fs_get_allocation_callbacks(pFS));
             return FS_DOES_NOT_EXIST;   /* Couldn't find a mount point. */
         }
 
