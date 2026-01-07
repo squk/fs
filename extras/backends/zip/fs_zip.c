@@ -524,7 +524,7 @@ FS_API fs_result fs_zip_deflate_decompress(fs_zip_deflate_decompressor* pDecompr
                         }
                     }
 
-                    tree_cur -= ((revCode >>= 1) & 1);
+                    tree_cur -= ((revCode >>= 1) & 1); (void)revCode;   /* The `(void)revCode` silences a static analysis warning. */
                     pTable->tree[-tree_cur - 1] = (fs_int16)symIndex;
                 }
 
@@ -995,7 +995,7 @@ static fs_result fs_zip_get_file_info_by_record_offset(fs_zip* pZip, size_t offs
                     }
 
                     pInfo->fileOffset = ((fs_uint64)pExtraData[extraDataOffset+chunkLocalOffset+7] << 56) | ((fs_uint64)pExtraData[extraDataOffset+chunkLocalOffset+6] << 48) | ((fs_uint64)pExtraData[extraDataOffset+chunkLocalOffset+5] << 40) | ((fs_uint64)pExtraData[extraDataOffset+chunkLocalOffset+4] << 32) | ((fs_uint64)pExtraData[extraDataOffset+chunkLocalOffset+3] << 24) | ((fs_uint64)pExtraData[extraDataOffset+chunkLocalOffset+2] << 16) | ((fs_uint64)pExtraData[extraDataOffset+chunkLocalOffset+1] << 8) | (fs_uint64)pExtraData[extraDataOffset+chunkLocalOffset+0];
-                    chunkLocalOffset += 8;
+                    chunkLocalOffset += 8; (void)chunkLocalOffset;
                 }
             }
 
@@ -1085,7 +1085,6 @@ static fs_result fs_zip_find_file_by_path(fs_zip* pZip, const fs_allocation_call
     result = fs_result_from_errno(fs_path_first(pFilePathClean, (size_t)filePathCleanLen, &pathIterator));
     if (result == FS_SUCCESS) {
         /* Reset the error code for safety. The loop below will be setting it to a proper value. */
-        result = FS_DOES_NOT_EXIST;
         for (;;) {
             fs_zip_cd_node* pChildNode;
             
@@ -1992,7 +1991,7 @@ static fs_result fs_file_read_zip_store(fs* pFS, fs_file_zip* pZipFile, void* pD
 {
     fs_result result;
     fs_uint64 bytesRemainingInFile;
-    size_t bytesRead;
+    size_t bytesRead = 0;
 
     FS_ZIP_ASSERT(pZipFile   != NULL);
     FS_ZIP_ASSERT(pBytesRead != NULL);
@@ -2007,8 +2006,6 @@ static fs_result fs_file_read_zip_store(fs* pFS, fs_file_zip* pZipFile, void* pD
     if (bytesToRead > bytesRemainingInFile) {
         bytesToRead = (size_t)bytesRemainingInFile;
     }
-
-    bytesRead = 0;
 
     /* Read from the uncompressed cache first. */
     {

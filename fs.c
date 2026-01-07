@@ -2604,6 +2604,10 @@ FS_API fs_result fs_init(const fs_config* pConfig, fs** ppFS)
         result = FS_SUCCESS;
     }
 
+    if (result != FS_SUCCESS) {
+        return result;
+    }
+
     *ppFS = pFS;
     return FS_SUCCESS;
 }
@@ -8970,8 +8974,6 @@ FS_API fs_result fs_memory_stream_seek(fs_memory_stream* pStream, fs_int64 offse
     if ((fs_uint64)FS_ABS(offset) > FS_SIZE_MAX) {
         return FS_INVALID_ARGS;  /* Trying to seek too far. This will never happen on 64-bit builds. */
     }
-
-    newCursor = pStream->cursor;
 
     if (origin == FS_SEEK_SET) {
         newCursor = 0;
