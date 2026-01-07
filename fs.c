@@ -11,6 +11,16 @@
 #include <string.h>
 #include <stdarg.h>
 
+#if defined(__clang__) && defined(__has_attribute)
+    #if __has_attribute(suppress)
+        #define FS_SUPPRESS_CLANG_ANALYZER __attribute__((suppress))
+    #else
+        #define FS_SUPPRESS_CLANG_ANALYZER
+    #endif
+#else
+    #define FS_SUPPRESS_CLANG_ANALYZER
+#endif
+
 /* BEG fs_va_copy.c */
 #ifndef fs_va_copy
     #if !defined(_MSC_VER) || _MSC_VER >= 1800
@@ -9353,7 +9363,7 @@ static FS_ASAN fs_uint32 fs_strlen_limited(char const* s, fs_uint32 limit)
    return (fs_uint32)(sn - s);
 }
 
-FS_API_SPRINTF_DEF int fs_vsprintfcb(fs_sprintf_callback* callback, void* user, char* buf, char const* fmt, va_list va)
+FS_SUPPRESS_CLANG_ANALYZER FS_API_SPRINTF_DEF int fs_vsprintfcb(fs_sprintf_callback* callback, void* user, char* buf, char const* fmt, va_list va)
 {
    static char hex[] = "0123456789abcdefxp";
    static char hexu[] = "0123456789ABCDEFXP";
@@ -10406,7 +10416,7 @@ static char* fs_clamp_callback(const char* buf, void* user, size_t len)
       len = c->count;
 
    if (len) {
-      if (buf != c->buf) {
+      if (buf != c->buf && buf != NULL) {
          const char* s, *se;
          char* d;
          d = c->buf;
