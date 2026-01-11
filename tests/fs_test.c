@@ -3869,7 +3869,7 @@ int fs_test_mem_stress_test(fs_test* pTest)
         }
 
         /* Create a file in the deepest directory. */
-        strncat(deepPath, "/deep_file.txt", sizeof(deepPath) - strlen(deepPath) - 1);
+        fs_strncat_s(deepPath, sizeof(deepPath), "/deep_file.txt", sizeof(deepPath) - strlen(deepPath) - 1);
         result = fs_test_open_and_write_file(pTest, pFS, deepPath, FS_WRITE | FS_IGNORE_MOUNTS, "deep content", 12);
         if (result != FS_SUCCESS) {
             printf("%s: Failed to create file in deep directory.\n", pTest->name);
