@@ -8284,7 +8284,19 @@ FS_API int fs_path_iterators_compare(const fs_path_iterator* pIteratorA, const f
         return 0;
     }
 
-    return fs_strncmp(pIteratorA->pFullPath + pIteratorA->segmentOffset, pIteratorB->pFullPath + pIteratorB->segmentOffset, FS_MIN(pIteratorA->segmentLength, pIteratorB->segmentLength));
+    int cmp = fs_strncmp(pIteratorA->pFullPath + pIteratorA->segmentOffset, pIteratorB->pFullPath + pIteratorB->segmentOffset, FS_MIN(pIteratorA->segmentLength, pIteratorB->segmentLength));
+    if (cmp != 0) {
+        return cmp;
+    }
+
+    if (pIteratorA->segmentLength < pIteratorB->segmentLength) {
+        return -1;
+    }
+    if (pIteratorA->segmentLength > pIteratorB->segmentLength) {
+        return 1;
+    }
+
+    return 0;
 }
 
 FS_API int fs_path_compare(const char* pPathA, size_t pathALen, const char* pPathB, size_t pathBLen)
