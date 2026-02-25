@@ -6551,24 +6551,29 @@ static fs_result fs_win32_path_init(fs_win32_path* pPath, const char* pPathUTF8,
             cbMultiByte = (int)pathUTF8Len + 1;
         }
 
-        wideCharLen = MultiByteToWideChar(CP_UTF8, 0, pPathUTF8, cbMultiByte, NULL, 0);
-        if (wideCharLen == 0) {
-            return FS_ERROR;
-        }
-
         /* Use the stack if possible. If not, allocate on the heap. */
-        if (wideCharLen <= (int)FS_COUNTOF(pPath->pathStack)) {
+        wideCharLen = MultiByteToWideChar(CP_UTF8, 0, pPathUTF8, cbMultiByte, pPath->pathStack, (int)FS_COUNTOF(pPath->pathStack));
+        if (wideCharLen > 0) {
             pPath->path = pPath->pathStack;
         } else {
-            pPath->pathHeap = (fs_win32_char*)fs_malloc(sizeof(fs_win32_char) * wideCharLen, pAllocationCallbacks);
-            if (pPath->pathHeap == NULL) {
-                return FS_OUT_OF_MEMORY;
-            }
+            if (GetLastError() == ERROR_INSUFFICIENT_BUFFER) {
+                wideCharLen = MultiByteToWideChar(CP_UTF8, 0, pPathUTF8, cbMultiByte, NULL, 0);
+                if (wideCharLen == 0) {
+                    return FS_ERROR;
+                }
 
-            pPath->path = pPath->pathHeap;
+                pPath->pathHeap = (fs_win32_char*)fs_malloc(sizeof(fs_win32_char) * wideCharLen, pAllocationCallbacks);
+                if (pPath->pathHeap == NULL) {
+                    return FS_OUT_OF_MEMORY;
+                }
+
+                pPath->path = pPath->pathHeap;
+                MultiByteToWideChar(CP_UTF8, 0, pPathUTF8, cbMultiByte, pPath->path, wideCharLen);
+            } else {
+                return FS_ERROR;
+            }
         }
 
-        MultiByteToWideChar(CP_UTF8, 0, pPathUTF8, cbMultiByte, pPath->path, wideCharLen);
         pPath->len = wideCharLen - 1;  /* The count returned by MultiByteToWideChar() includes the null terminator, so subtract 1 to compensate. */
 
         /* Convert forward slashes to back slashes for compatibility. */
@@ -6852,8 +6857,7 @@ static fs_result fs_info_from_stdio_win32(HANDLE hFile, fs_file_info* pInfo)
 
 static fs_result fs_info_win32(fs* pFS, const char* pPath, int openMode, fs_file_info* pInfo)
 {
-    HANDLE hFind;
-    WIN32_FIND_DATA fd;
+    WIN32_FILE_ATTRIBUTE_DATA fileAttrData;
     fs_result result;
     fs_win32_path path;
 
@@ -6871,23 +6875,33 @@ static fs_result fs_info_win32(fs* pFS, const char* pPath, int openMode, fs_file
         return result;
     }
 
-    hFind = FindFirstFile(path.path, &fd);
+    if (GetFileAttributesEx(path.path, GetFileExInfoStandard, &fileAttrData)) {
+        if (fileAttrData.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) {
+            HANDLE hFind;
+            WIN32_FIND_DATA fd;
+            hFind = FindFirstFile(path.path, &fd);
+            if (hFind != INVALID_HANDLE_VALUE) {
+                *pInfo = fs_file_info_from_WIN32_FIND_DATA(&fd);
+                FindClose(hFind);
+                result = FS_SUCCESS;
+            } else {
+                result = fs_result_from_GetLastError();
+            }
+        } else {
+            FS_ZERO_OBJECT(pInfo);
+            pInfo->size             = ((fs_uint64)fileAttrData.nFileSizeHigh << 32) | (fs_uint64)fileAttrData.nFileSizeLow;
+            pInfo->lastModifiedTime = fs_FILETIME_to_unix(&fileAttrData.ftLastWriteTime);
+            pInfo->lastAccessTime   = fs_FILETIME_to_unix(&fileAttrData.ftLastAccessTime);
+            pInfo->directory        = (fileAttrData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+            pInfo->symlink          = 0;
+            result = FS_SUCCESS;
+        }
+    } else {
+        result = fs_result_from_GetLastError();
+    }
 
     fs_win32_path_uninit(&path, fs_get_allocation_callbacks(pFS));
 
-    if (hFind == INVALID_HANDLE_VALUE) {
-        result = fs_result_from_GetLastError();
-        goto done;
-    } else {
-        result = FS_SUCCESS;
-    }
-
-    FindClose(hFind);
-    hFind = NULL;
-
-    *pInfo = fs_file_info_from_WIN32_FIND_DATA(&fd);
-
-done:
     (void)openMode;
     (void)pFS;
     return result;
@@ -7240,18 +7254,19 @@ typedef struct fs_iterator_win32
 {
     fs_iterator iterator;
     HANDLE hFind;
-    WIN32_FIND_DATAA findData;
-    char* pFullFilePath;        /* Points to the end of the structure. */
-    size_t directoryPathLen;    /* The length of the directory section. */
+    size_t nameCapacity;
 } fs_iterator_win32;
 
 static void fs_free_iterator_win32(fs_iterator* pIterator);
 
 static fs_iterator* fs_iterator_win32_resolve(fs_iterator_win32* pIteratorWin32, fs* pFS, HANDLE hFind, const WIN32_FIND_DATA* pFD)
 {
-    fs_iterator_win32* pNewIteratorWin32;
+    fs_iterator_win32* pNewIteratorWin32 = pIteratorWin32;
     size_t allocSize;
     int nameLenIncludingNullTerminator;
+#if defined(UNICODE) || defined(_UNICODE)
+    fs_bool32 conversionDone = FS_FALSE;
+#endif
 
     /*
     The name is stored at the end of the struct. In order to know how much memory to allocate we'll
@@ -7259,9 +7274,26 @@ static fs_iterator* fs_iterator_win32_resolve(fs_iterator_win32* pIteratorWin32,
     */
     #if defined(UNICODE) || defined(_UNICODE)
     {
-        nameLenIncludingNullTerminator = WideCharToMultiByte(CP_UTF8, 0, pFD->cFileName, -1, NULL, 0, NULL, NULL);
+        if (pIteratorWin32 != NULL && pIteratorWin32->nameCapacity > 0) {
+            nameLenIncludingNullTerminator = WideCharToMultiByte(CP_UTF8, 0, pFD->cFileName, -1, (char*)pIteratorWin32 + sizeof(fs_iterator_win32), (int)pIteratorWin32->nameCapacity, NULL, NULL);
+            if (nameLenIncludingNullTerminator > 0) {
+                conversionDone = FS_TRUE;
+            } else if (GetLastError() == ERROR_INSUFFICIENT_BUFFER) {
+                nameLenIncludingNullTerminator = WideCharToMultiByte(CP_UTF8, 0, pFD->cFileName, -1, NULL, 0, NULL, NULL);
+            } else {
+                fs_free_iterator_win32((fs_iterator*)pIteratorWin32);
+                return NULL;
+            }
+        } else {
+            nameLenIncludingNullTerminator = WideCharToMultiByte(CP_UTF8, 0, pFD->cFileName, -1, NULL, 0, NULL, NULL);
+        }
+
         if (nameLenIncludingNullTerminator == 0) {
-            fs_free_iterator_win32((fs_iterator*)pIteratorWin32);
+            if (pIteratorWin32 != NULL) {
+                fs_free_iterator_win32((fs_iterator*)pIteratorWin32);
+            } else {
+                FindClose(hFind);
+            }
             return NULL;
         }
     }
@@ -7271,12 +7303,22 @@ static fs_iterator* fs_iterator_win32_resolve(fs_iterator_win32* pIteratorWin32,
     }
     #endif
 
-    allocSize = FS_MAX(sizeof(fs_iterator_win32) + nameLenIncludingNullTerminator, FS_WIN32_MIN_ITERATOR_ALLOCATION_SIZE);    /* 1KB just to try to avoid excessive internal reallocations inside realloc(). */
+    if (pIteratorWin32 == NULL || pIteratorWin32->nameCapacity < (size_t)nameLenIncludingNullTerminator) {
+        allocSize = FS_MAX(sizeof(fs_iterator_win32) + nameLenIncludingNullTerminator, FS_WIN32_MIN_ITERATOR_ALLOCATION_SIZE);    /* 1KB just to try to avoid excessive internal reallocations inside realloc(). */
 
-    pNewIteratorWin32 = (fs_iterator_win32*)fs_realloc(pIteratorWin32, allocSize, fs_get_allocation_callbacks(pFS));
-    if (pNewIteratorWin32 == NULL) {
-        fs_free_iterator_win32((fs_iterator*)pIteratorWin32);
-        return NULL;
+        pNewIteratorWin32 = (fs_iterator_win32*)fs_realloc(pIteratorWin32, allocSize, fs_get_allocation_callbacks(pFS));
+        if (pNewIteratorWin32 == NULL) {
+            if (pIteratorWin32 != NULL) {
+                fs_free_iterator_win32((fs_iterator*)pIteratorWin32);
+            } else {
+                FindClose(hFind);
+            }
+            return NULL;
+        }
+        pNewIteratorWin32->nameCapacity = allocSize - sizeof(fs_iterator_win32);
+#if defined(UNICODE) || defined(_UNICODE)
+        conversionDone = FS_FALSE;
+#endif
     }
 
     pNewIteratorWin32->iterator.pFS = pFS;
@@ -7288,7 +7330,9 @@ static fs_iterator* fs_iterator_win32_resolve(fs_iterator_win32* pIteratorWin32,
 
     #if defined(UNICODE) || defined(_UNICODE)
     {
-        WideCharToMultiByte(CP_UTF8, 0, pFD->cFileName, -1, (char*)pNewIteratorWin32->iterator.pName, nameLenIncludingNullTerminator, NULL, NULL);  /* const-cast is safe here. */
+        if (!conversionDone) {
+            WideCharToMultiByte(CP_UTF8, 0, pFD->cFileName, -1, (char*)pNewIteratorWin32->iterator.pName, nameLenIncludingNullTerminator, NULL, NULL);  /* const-cast is safe here. */
+        }
     }
     #else
     {
